@@ -1,36 +1,26 @@
-name: Build TWST Tool
+name: Build TWST Tool (Robust Version)
 
-# 触发条件：只要上传代码，就开始干活
 on: [push]
 
 jobs:
   build:
-    # 使用 Windows 系统
     runs-on: windows-latest
-
     steps:
-    # 1. 下载您的代码到云端
-    - uses: actions/checkout@v3
+      - name: 1. 下载您的代码
+        uses: actions/checkout@v3
 
-    # 2. 安装 Python
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    # 3. 安装依赖库 (OpenCV, Tkinter支持, 打包工具等)
-    - name: Install dependencies
-      run: |
-        pip install opencv-python-headless srt pillow pyinstaller
-
-    # 4. 开始打包 (生成单文件EXE，不弹黑框)
-    - name: Build EXE
-      run: |
-        pyinstaller --noconsole --onefile twst_ocr.py
-
-    # 5. 把生成的 EXE 上传给您下载
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: TWST_Sub_Tool
-        path: dist/twst_ocr.exe
+      - name: 2. 使用专业机器人打包
+        uses: cdrx/pyinstaller-action@v0
+        with:
+          # 你的Python脚本文件名
+          script: twst_ocr.py
+          
+          # 生成的EXE文件名 (可以自定义)
+          exe-name: twst_timeline_tool
+          
+          # 购物清单文件的名字
+          requirements: requirements.txt
+          
+          # 打包参数：生成单个文件，并且运行时不显示黑色的命令行窗口
+          onefile: true
+          noconsole: true
