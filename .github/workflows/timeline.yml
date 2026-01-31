@@ -1,8 +1,5 @@
 name: Build and Release TWST Tool
 
-# 触发条件：
-# 1. 每次上传代码 (push)
-# 2. 也可以手动触发 (workflow_dispatch)
 on:
   push:
     branches: [ main ]
@@ -15,8 +12,8 @@ jobs:
       - name: 1. 下载您的代码
         uses: actions/checkout@v3
 
-      - name: 2. 使用专业机器人打包
-        uses: cdrx/pyinstaller-action@v0
+      - name: 2. 使用专业机器人打包 (已修复版本号)
+        uses: cdrx/pyinstaller-action@main
         with:
           script: twst_ocr.py
           exe-name: twst_timeline_tool
@@ -24,23 +21,12 @@ jobs:
           onefile: true
           noconsole: true
           
-      - name: 3. 【新增】自动发布到 Release
+      - name: 3. 自动发布到 Release
         uses: softprops/action-gh-release@v2
         with:
-          # 告诉机器人去哪里找打包好的 EXE
           files: dist/twst_timeline_tool.exe
-          
-          # 【新增】自动生成版本号 (例如: v2025.12.19)
-          tag_name: v${{ github.run_number }}-${{ env.TIMESTAMP }}
-          
-          # Release 的标题和描述 (可以自定义)
+          tag_name: v${{ github.run_number }}
           name: "TWST Timeline Tool v${{ github.run_number }}"
           body: |
             自动打包的最新版字幕提取工具。
             下载 .exe 文件直接运行即可。
-        env:
-          TIMESTAMP: ${{ steps.date.outputs.date }}
-          
-      - name: Get current date # 获取日期用于版本号
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
