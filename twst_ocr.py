@@ -6,21 +6,21 @@ import srt
 import datetime
 import threading
 import os
+import traceback
 from PIL import Image, ImageTk
 
 class TwstApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("TWST 字幕提取器 V8 (防连读增强版)")
+        self.root.title("TWST 字幕提取器 V8.1 (防崩溃修复版)")
         self.root.geometry("1200x850")
         
-        # TWST 默认参数 (1080P/720P通用预估)
-        self.rect_d = [320, 465, 630, 100] # 绿: 对话
-        self.rect_c = [430, 170, 450, 90]  # 蓝: 选项
-        self.rect_b = [100, 100, 150, 150] # 红: 背景参考
+        # TWST 默认参数
+        self.rect_d = [320, 465, 630, 100] 
+        self.rect_c = [430, 170, 450, 90]  
+        self.rect_b = [100, 100, 150, 150] 
         
-        # 核心阈值
-        self.diff_threshold = 3.0 # 默认灵敏度 3.0% (越小越敏感)
+        self.diff_threshold = 3.0
         
         self.video_path = ""
         self.cap = None
@@ -37,7 +37,8 @@ class TwstApp:
         tk.Button(frame_top, text="📂 加载视频", command=self.load_video, font=("Arial", 12)).pack(side=tk.LEFT, padx=10)
         self.lbl_status = tk.Label(frame_top, text="准备就绪", fg="gray")
         self.lbl_status.pack(side=tk.LEFT)
-        tk.Button(frame_top, text="▶️ 开始提取", command=self.start_thread, bg="#ddffdd", font=("Arial", 12, "bold")).pack(side=tk.RIGHT, padx=10)
+        self.btn_start = tk.Button(frame_top, text="▶️ 开始提取", command=self.start_thread, bg="#ddffdd", font=("Arial", 12, "bold"))
+        self.btn_start.pack(side=tk.RIGHT, padx=10)
 
         # 2. 中间预览
         frame_main = tk.Frame(self.root)
@@ -52,7 +53,7 @@ class TwstApp:
         frame_ctrl = tk.Frame(frame_main, width=320)
         frame_ctrl.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
         
-        # 3. 灵敏度控制 (V8 新增)
+        # 3. 灵敏度控制
         lf_diff = tk.LabelFrame(frame_ctrl, text="⚡️ 切分灵敏度 (突变检测)", padx=5, pady=5)
         lf_diff.pack(fill=tk.X, pady=10)
         tk.Label(lf_diff, text="防连读专用：数值越小越敏感", fg="gray", font=("Arial", 8)).pack()
@@ -121,7 +122,6 @@ class TwstApp:
         self.scale_time.config(to=self.total_frames)
         self.lbl_status.config(text=f"已加载: {os.path.basename(path)}")
         
-        # 更新滑块最大值
         for tab_id in self.sliders:
             for s in self.sliders[tab_id]: s.config(to=max(w, h))
         self.update_preview()
@@ -153,145 +153,116 @@ class TwstApp:
     def start_thread(self):
         if not self.video_path: return
         self.is_processing = True
+        self.btn_start.config(state=tk.DISABLED, text="提取中...")
         threading.Thread(target=self.run_logic, daemon=True).start()
 
     def run_logic(self):
-        out_srt = os.path.splitext(self.video_path)[0] + ".srt"
-        cap = cv2.VideoCapture(self.video_path)
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        subs = []
-        
-        # TWST 米白色定义
-        LOWER_COLOR = np.array([0, 0, 130]) 
-        UPPER_COLOR = np.array([180, 100, 255])
-        kernel = np.ones((3,3), np.uint8)
-        
-        # 状态变量
-        d_speaking = False
-        d_start = 0
-        d_peak = 0.0
-        c_active = False
-        c_start = 0
-        sub_index = 1
-        
-        # 记录上一帧的文字形状 (用于突变检测)
-        last_dilated_d = None
-        diff_limit = self.diff_threshold / 100.0
-        
-        idx = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret: break
+        try:
+            # === 【修复点 1】参数快照 ===
+            # 在开始瞬间把参数复制一份，防止用户中途拖动滑块导致崩溃
+            use_rect_d = list(self.rect_d)
+            use_rect_c = list(self.rect_c)
+            use_rect_b = list(self.rect_b)
+            use_diff_thresh = self.diff_threshold
             
-            if idx % 100 == 0:
-                self.root.after(0, lambda v=(idx/total)*100: self.progress.config(value=v))
+            out_srt = os.path.splitext(self.video_path)[0] + ".srt"
+            cap = cv2.VideoCapture(self.video_path)
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            subs = []
             
-            hsv_full = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            if total == 0: raise Exception("无法读取视频总帧数，可能文件已损坏")
             
-            # --- 区域分析 ---
-            # 绿框 (对话)
-            xd, yd, wd, hd = self.rect_d
-            roi_d_hsv = hsv_full[yd:yd+hd, xd:xd+wd]
-            ratio_d = cv2.countNonZero(cv2.inRange(roi_d_hsv, LOWER_COLOR, UPPER_COLOR)) / (wd * hd)
+            LOWER_COLOR = np.array([0, 0, 130]) 
+            UPPER_COLOR = np.array([180, 100, 255])
+            kernel = np.ones((3,3), np.uint8)
             
-            # 蓝框 (选项)
-            xc, yc, wc, hc = self.rect_c
-            roi_c_hsv = hsv_full[yc:yc+hc, xc:xc+wc]
-            ratio_c = cv2.countNonZero(cv2.inRange(roi_c_hsv, LOWER_COLOR, UPPER_COLOR)) / (wc * hc)
+            d_speaking = False
+            d_start = 0
+            d_peak = 0.0
+            c_active = False
+            c_start = 0
+            sub_index = 1
             
-            # 红框 (背景)
-            xb, yb, wb, hb = self.rect_b
-            roi_b_hsv = hsv_full[yb:yb+hb, xb:xb+wb]
-            ratio_b = cv2.countNonZero(cv2.inRange(roi_b_hsv, LOWER_COLOR, UPPER_COLOR)) / (wb * hb)
+            last_dilated_d = None
+            diff_limit = use_diff_thresh / 100.0
             
-            # --- 对话逻辑 (V8 增强版) ---
-            density_d = 0.0
-            diff_score = 0.0
-            
-            # 只有当绿框是米白色时才检测文字
-            if ratio_d > 0.4:
-                roi_gray = cv2.cvtColor(frame[yd:yd+hd, xd:xd+wd], cv2.COLOR_BGR2GRAY)
-                # 找黑字
-                _, bin_d = cv2.threshold(roi_gray, 150, 255, cv2.THRESH_BINARY_INV)
-                dil_d = cv2.dilate(bin_d, kernel, iterations=1)
-                density_d = cv2.countNonZero(dil_d) / (wd * hd)
+            idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret: break
                 
-                # 计算形状突变
-                if last_dilated_d is not None:
-                    diff_img = cv2.absdiff(dil_d, last_dilated_d)
-                    diff_score = cv2.countNonZero(diff_img) / (wd * hd)
-                last_dilated_d = dil_d.copy()
-            else:
-                last_dilated_d = None # 对话框消失，重置历史
-            
-            if not d_speaking:
-                if density_d > 0.005:
-                    d_speaking = True
-                    d_start = idx
-                    d_peak = density_d
-            else:
-                if density_d > d_peak: d_peak = density_d
+                if idx % 100 == 0:
+                    self.root.after(0, lambda v=(idx/total)*100: self.progress.config(value=v))
                 
-                should_cut = False
-                cut_reason = ""
+                hsv_full = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
                 
-                # 条件1: 没字了
-                if density_d < 0.003: 
-                    should_cut = True
-                    cut_reason = "empty"
-                # 条件2: 字突然变少 (峰值回落)
-                elif density_d < (d_peak * 0.4) and d_peak > 0.02: 
-                    should_cut = True
-                    cut_reason = "drop"
-                # 条件3: 字的形状突变 (V8核心: 防连读)
-                # 只有当这句话持续了一会儿(>0.2s)才检测，防止打字过程中的误判
-                elif diff_score > diff_limit and (idx - d_start)/self.fps > 0.2:
-                    should_cut = True
-                    cut_reason = "diff"
-                
-                if should_cut:
-                    dur = (idx - d_start) / self.fps
-                    if dur > 0.2: # 过滤杂讯
-                        st = datetime.timedelta(seconds=d_start/self.fps)
-                        et = datetime.timedelta(seconds=idx/self.fps)
-                        subs.append(srt.Subtitle(index=sub_index, start=st, end=et, content=f"Line {sub_index}"))
-                        sub_index += 1
+                # --- 区域分析 (使用快照参数) ---
+                xd, yd, wd, hd = use_rect_d
+                # 【修复点 2】安全除法，防止宽度高度为0
+                if wd == 0 or hd == 0: 
+                    idx += 1
+                    continue
                     
-                    if density_d > 0.005: # 如果还有字，说明是连读，立刻开始下一句
+                roi_d_hsv = hsv_full[yd:yd+hd, xd:xd+wd]
+                ratio_d = cv2.countNonZero(cv2.inRange(roi_d_hsv, LOWER_COLOR, UPPER_COLOR)) / (wd * hd)
+                
+                xc, yc, wc, hc = use_rect_c
+                if wc > 0 and hc > 0:
+                    roi_c_hsv = hsv_full[yc:yc+hc, xc:xc+wc]
+                    ratio_c = cv2.countNonZero(cv2.inRange(roi_c_hsv, LOWER_COLOR, UPPER_COLOR)) / (wc * hc)
+                else:
+                    ratio_c = 0
+                
+                xb, yb, wb, hb = use_rect_b
+                if wb > 0 and hb > 0:
+                    roi_b_hsv = hsv_full[yb:yb+hb, xb:xb+wb]
+                    ratio_b = cv2.countNonZero(cv2.inRange(roi_b_hsv, LOWER_COLOR, UPPER_COLOR)) / (wb * hb)
+                else:
+                    ratio_b = 0
+                
+                # --- 对话逻辑 ---
+                density_d = 0.0
+                diff_score = 0.0
+                
+                if ratio_d > 0.4:
+                    roi_gray = cv2.cvtColor(frame[yd:yd+hd, xd:xd+wd], cv2.COLOR_BGR2GRAY)
+                    _, bin_d = cv2.threshold(roi_gray, 150, 255, cv2.THRESH_BINARY_INV)
+                    dil_d = cv2.dilate(bin_d, kernel, iterations=1)
+                    density_d = cv2.countNonZero(dil_d) / (wd * hd)
+                    
+                    if last_dilated_d is not None:
+                        diff_img = cv2.absdiff(dil_d, last_dilated_d)
+                        diff_score = cv2.countNonZero(diff_img) / (wd * hd)
+                    last_dilated_d = dil_d.copy()
+                else:
+                    last_dilated_d = None
+                
+                if not d_speaking:
+                    if density_d > 0.005:
                         d_speaking = True
                         d_start = idx
                         d_peak = density_d
-                    else:
-                        d_speaking = False
-                        d_peak = 0.0
-
-            # --- 选项逻辑 (V7逻辑: 必须对比背景) ---
-            is_choice = (ratio_c > 0.6) and (ratio_c > ratio_b + 0.3)
-            if not c_active:
-                if is_choice:
-                    c_active = True
-                    c_start = idx
-            else:
-                if not is_choice:
-                    c_active = False
-                    if (idx - c_start) / self.fps > 0.5:
-                        st = datetime.timedelta(seconds=c_start/self.fps)
-                        et = datetime.timedelta(seconds=idx/self.fps)
-                        subs.append(srt.Subtitle(index=sub_index, start=st, end=et, content=f"[Choice] Line {sub_index}"))
-                        sub_index += 1
-            
-            idx += 1
-            
-        cap.release()
-        subs.sort(key=lambda x: x.start)
-        for i, sub in enumerate(subs): sub.index = i + 1
-        
-        with open(out_srt, "w", encoding="utf-8") as f: f.write(srt.compose(subs))
-        
-        self.is_processing = False
-        self.root.after(0, lambda: messagebox.showinfo("完成", f"字幕已生成:\n{out_srt}"))
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = TwstApp(root)
-    root.mainloop()
+                else:
+                    if density_d > d_peak: d_peak = density_d
+                    
+                    should_cut = False
+                    
+                    if density_d < 0.003: should_cut = True
+                    elif density_d < (d_peak * 0.4) and d_peak > 0.02: should_cut = True
+                    # 突变检测 (使用快照的阈值)
+                    elif diff_score > diff_limit and (idx - d_start)/self.fps > 0.2: should_cut = True
+                    
+                    if should_cut:
+                        dur = (idx - d_start) / self.fps
+                        if dur > 0.2:
+                            st = datetime.timedelta(seconds=d_start/self.fps)
+                            et = datetime.timedelta(seconds=idx/self.fps)
+                            subs.append(srt.Subtitle(index=sub_index, start=st, end=et, content=f"Line {sub_index}"))
+                            sub_index += 1
+                        
+                        if density_d > 0.005:
+                            d_speaking = True
+                            d_start = idx
+                            d_peak = density_d
+                        else:
+                            d_speaking =
