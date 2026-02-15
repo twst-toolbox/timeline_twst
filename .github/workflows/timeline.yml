@@ -1,11 +1,12 @@
 name: Build TWST Tool
 
 on:
+  # 只要主分支有变动就跑
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+  # 【关键】增加手动触发按钮，哪怕没自动跑也能点
   workflow_dispatch:
 
-# 给机器人发通行证，允许发布 Release
 permissions:
   contents: write
 
@@ -21,33 +22,25 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 1. 安装依赖库
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install opencv-python-headless srt Pillow
 
-      # 2. 使用 Nuitka 打包 (稳定、快)
+      # 使用 Nuitka 打包
       - name: Build with Nuitka
         uses: Nuitka/Nuitka-Action@main
         with:
-          script-name: twst_ocr.py          # 您的脚本名字
-          mode: onefile                     # 生成单文件
-          enable-plugins: tk-inter          # 开启图形界面支持
-          disable-console: true             # 运行时不显示黑框
+          script-name: twst_ocr.py
+          mode: onefile
+          enable-plugins: tk-inter
+          disable-console: true
 
-      # 3. 备份上传 (Artifacts) - 双重保险
-      - name: Upload Artifact (Backup)
-        uses: actions/upload-artifact@v4
-        with:
-          name: TWST-Tool-Backup
-          path: build/*.exe
-
-      # 4. 发布到 Release
+      # 发布到 Release
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') == false
+        if: github.event_name != 'pull_request'
         with:
           files: build/*.exe
-          tag_name: v${{ github.run_number }}
-          name: "TWST Tool v${{ github.run_number }}"
-          body: "TWST 字幕提取器 (V8 增强版)"
+          tag_name: v${{ github.run_number }}-${{ github.sha }}
+          name: "TWST Tool Build ${{ github.run_number }}"
+          body: "TWST 字幕提取器 V8.1 修复版"
