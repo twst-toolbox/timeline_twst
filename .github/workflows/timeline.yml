@@ -1,4 +1,4 @@
-name: Build All-in-One Tool (ZIP Version)
+name: Build All-in-One Tool
 
 on:
   push:
@@ -29,33 +29,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 1. 改为 standalone 模式 (生成一个文件夹，大幅降低病毒误报率)
+      # 1. 打包生成 EXE
       - name: Build with Nuitka
         uses: Nuitka/Nuitka-Action@main
         with:
           script-name: main_tool.py
-          mode: standalone 
+          output-file: TWST_Auto_Tool.exe
+          mode: onefile
           enable-plugins: tk-inter
           disable-console: true
+          # 尝试添加一点元数据，增加可信度（玄学，但有用）
+          company-name: "TWST Fan Tools"
+          product-name: "TWST Auto Sub"
+          file-version: "9.0.0.0"
 
-      # 2. 将生成的文件夹重命名
-      - name: Rename Folder
+      # 2. 【关键新增】把它压缩成 ZIP
+      # 这样浏览器下载时就不会直接报警删除了
+      - name: Zip the output
         run: |
-          Rename-Item "build/main_tool.dist" "TWST_Auto_Tool_v${{ env.TODAY }}"
+          powershell Compress-Archive -Path TWST_Auto_Tool.exe -DestinationPath TWST_Auto_Tool_v${{ env.TODAY }}.zip
 
-      # 3. 将文件夹打包成 ZIP 压缩包
-      - name: Create ZIP Archive
-        run: |
-          Compress-Archive -Path "TWST_Auto_Tool_v${{ env.TODAY }}" -DestinationPath "TWST_Auto_Tool_v${{ env.TODAY }}.zip"
-
-      # 4. 发布 ZIP 文件到 Release
+      # 3. 发布 (上传 ZIP 而不是 EXE)
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         if: github.event_name != 'pull_request'
         with:
-          files: "*.zip"
+          # 只上传 zip 文件
+          files: TWST_Auto_Tool_v${{ env.TODAY }}.zip
+          
           tag_name: v${{ env.TODAY }}-${{ github.run_number }}
           name: "TWST Tool [${{ env.TODAY }}]"
           body: |
             自动构建版本: ${{ env.TODAY }}
-            【防病毒误报版】请下载 ZIP 包，解压后运行里面的 main_tool.exe。
+            
+            ⚠️ **下载提示：**
+            下载解压后，如果运行提示“Windows 已保护您的电脑”：
+            请点击 **“更多信息”** -> **“仍要运行”**。
+            这是因为软件没有付费购买数字证书，属于正常现象。
